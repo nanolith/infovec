@@ -48,3 +48,13 @@ All of `vectord` and the client API is fully model checked using [CBMC][cbmc]. A
 tutorial for how to use CBMC based on its use in infovec will be published soon.
 
 [cbmc]: https://www.cprover.org/cbmc/
+
+All libraries and APIs that `vectord` uses are mocked in the model checker using
+shadow libraries.  These shadow libraries simulate the contractual behavior of
+the original libraries while simplifying the simulation overhead of the model
+checker. For instance, it is not necessary to fully simulate file I/O, and
+instead, the shadow methods for I/O simulate resource constraints and each of
+the possible return codes or error states of the I/O library.  Likewise, file
+descriptors are simulated using allocated resources so that any behavior that
+fails to properly close opened files or to use file descriptors after they have
+been closed will cause error states in the model checker.
