@@ -1,0 +1,46 @@
+\title{Introduction to Model Checking}
+\author{Justin Handville}
+
+\section{Introduction}
+
+This article series demonstrates how to use model checking, specifically
+\verb/CBMC/, to build software specification and to verify its implementation.
+The \verb/CBMC/ tool integrates an interpretation model of C with an SMT solver
+in order to find code that violates one or more properties.  Many properties,
+such as memory management or integer overflow, are built in.  Other properties,
+such as function contracts, must be written by the user.
+
+I am writing two series of articles.  The first is a model checking tutorial
+series using C, and the second is a model checking tutorial series using Java. I
+chose C first, because it is a language that is widely used in both system and
+firmware development, and most C source code out there is \emph{abysmal}. This
+is partly the fault of the language: C is a foot cannon. But, it is mostly the
+fault of developers who don't take advantage of much of the tooling out there
+that is designed to make C development safer. I think that learning \verb/CBMC/
+is a reasonable way to build safer software in C.
+
+For this tutorial series, we will build a vector search engine for documents and
+source code.  This search engine will run as a daemon on a Unix-like system and
+will have a simple socket-based API for adding information to the search engine
+and for querying the search engine for results.  This will allow client code
+written in any language to perform the heavy lifting of converting documents to
+a format that the search engine can understand, including proprietary document
+formats or source code.  A client library, also written in C, will be provided
+for simplifying client-side integration.
+
+The first thing we need to do is to define the server-side API.  We will define
+this API in terms of a binary protocol that both the server and the client
+library must understand.  Once we write this specification, we will prove, with
+CBMC, that both sides follow this specification.  In the process of defining
+this specification, we will also need to write function contracts in CBMC to
+cover the third party libraries we will use to integrate these components. We
+won't use CBMC to verify that these libraries themselves are correct, but rather
+that our use of these libraries is correct with respect to the documentation. We
+can certainly use CBMC to verify the correctness of these libraries, but this is
+best done as a separate project.  Specifically, that should be the
+responsibility of library maintainers.  We could open a pull request with these
+model checks and with any changes that our model checking uncovers, but that is
+beyond the scope of this tutorial.  In practice, all code including libraries
+should be subjected to formal methods.  But, that would make for a very lengthy
+tutorial.
+
