@@ -44,3 +44,166 @@ beyond the scope of this tutorial.  In practice, all code including libraries
 should be subjected to formal methods.  But, that would make for a very lengthy
 tutorial.
 
+\section{API Features}
+
+Before we can define the API, we need to determine the sort of features that we
+will support. This will inform design decisions and allow us to start building
+up the specifications to determine how this system will work and whether the
+implementation matches the specification.
+
+\subsection{Context-Sensitive Search}
+
+The first feature is a context-sensitive search.  What this means
+is that we want to enable searches across different contexts instead of one
+giant context in order to ensure that search results remain relevant.  For
+example, we could have different contexts for different software projects.
+Searching for ``DatabaseConnection'' from a global context would return results
+from any project that has such a term.  Many tools, such as \verb/cscope/, are
+designed to work within a single context.  However, if I do want to search in a
+different context, or in all contexts, it would be nice if this could be
+specified.  With \verb/cscope/, I'd have to start an instance in the context I
+wished to search.  There are several ways we could manage contexts, for
+instance, using a keyword or a numbered index.  However, if there are many
+contexts, I have to remember which keywords I have used or which indexes.
+Barring some kind of URI scheme, which has its own complications, this can
+quickly become untenable.  Week-to-week, I work in dozens of different code
+bases.  I don't know if this is common for other developers, but either way,
+that seems like a lot of cognitive load.  Instead, we will use UUIDs.  These can
+be created at random, and with 122 random bits, there is an extremely low
+collision probability.  These UUIDs can be hard coded in scripts, which makes it
+easy to share contexts or create new contexts.  Since it's highly unlikely that
+there would be a collision, a new UUID can be generated for each project we wish
+to add to the vector search without needing to worry about remembering which
+index values we used for other contexts.
+
+\subsection{Query Language}
+
+User code needs to be able to query the API for a sequence of keywords. A query
+in a vector search is effectively the computation of the cosine of a sparse
+vector against one dimension per word in the overall search query.  A naive
+approach computes all cosines equally.  For instance, if the query is ``correct
+horse battery staple'', then each of these terms are weighted equally.  Since
+the probability of each of these terms occurring together in the same document
+is relatively low in this example, a sorted list of documents would likely
+return the document we are searching for within the first couple of results.
+Other queries could have more murky results, especially if the search terms are
+common across many documents.  The user, of course, could construct better
+queries to better sort the results, and this will help.  Adding unique keywords
+specific to a desired document will cause it to jump toward the front of the
+search results.  If one keyword only exists in certain documents, and another
+less relevant keyword exists in other documents, then the search results may be
+muddied by this less relevant keyword.  Different search engines have come up
+with different ways of handling this.  Older search engines incorporated Boolean
+logic. For example, \tt{iron AND butterfly AND band}.  This has unintended
+effects, in that all three of these search terms may not be used in the same
+document, and a document that uses a subset may still be useful to the user.
+Google takes a different approach by allowing portions of the query to be
+emphasized by using double quotes.  This emphasis could be for a single term or
+for a combination of terms that must be found together in a document.  For
+instance, \tt{``iron butterfly'' band} emphasizes ``iron butterfly'' -- both
+must be found together -- and then includes ``band'' as an additional term. In
+short, there is a lot of complexity here to consider.  A simple solution to this
+is to push this complexity to user code. This creates complexity on its own, but
+it can be managed.
+
+A vector search is a map-reduce problem.  The query can be executed in parallel,
+but the final reduction has to be done in a single thread.  Since querying
+involves mapping a vector to a cosine, the results can be sorted as part of this
+parallel execution as long as these sorted results are merged at the end.  The
+map-reduce portion of this query is constant, but how this map-reduce operates
+does not need to be constant.  We can shift more of the reduction to occur in
+parallel to perform one final merge sort across multiple streams at the end.
+Different parallel processes can merge result streams from other parallel
+processes, and so on, and so forth.  Different queries could have different
+map-reduce topologies.  For instance, queries involving Boolean logic or
+emphasis are best split up so that a single stream is mapped to a different
+portion of the query (search for everything including ``iron'', and then search
+the results for everything containing ``butterfly'').  Some of these queries
+will result in a less efficient way of getting the same result, but others will
+get better results.  The user, ultimately, will be the one optimizing these
+queries.  So, the query language is not just a combination of keywords, but it
+is also a set of instructions to the search engine as to how to configure the
+map-reduce in order to execute the query.  The user-level scripts can deal with
+taking a query typed by the user and building instructions for how to configure
+the search.  From the user's perspective, it's just a query like what would be
+typed into Google.  From the server's perspective, it's a set of instructions
+telling it how to construct and execute a map-reduce to find relevant results.
+
+Since the user scripts will be responsible for taking user input and creating
+instructions for the server, and the server will be responsible for executing
+these instructions, we only need to define the instructions.  For simplicity, we
+will think of these instructions in terms of a Forth style RPN machine.  RPN, or
+Reverse Polish Notation, involves pushing data values onto a stack before
+they are reduced using an operator.  For instance, to add $1 + 2$, we would
+push $1$ onto the stack, then push $2$ onto the stack, and then reduce these two
+using the $+$ operation.  This would push $3$ onto the stack as a result, and
+this result could be used in further operations.  We can do something similar
+with our search engine, except instead of operating on numbers, we are operating
+on a vector space. To keep things easy, our machine will have four types:
+\verb/TERM/, \verb/QUERY/, \verb/STREAM/, and \verb/SCALAR/..  A \verb/TERM/ can
+be reduced to a \verb/QUERY/ through combination operators.  A \verb/QUERY/ can
+be combined with another \verb/QUERY/ to form a more complex \verb/QUERY/.  A
+\verb/QUERY/ can be executed to create a \verb/STREAM/.  A \verb/STREAM/ can be
+combined with another \verb/STREAM/ by applying a \verb/QUERY/ to it.  The
+server expects any utterance in this query language to end with a single
+\verb/STREAM/. Any other utterance is malformed. The final type, \verb/SCALAR/,
+will be used to tune certain operations.  A \verb/SCALAR/ is a floating point
+value. For instance, when two streams are joined, their cosine values must be
+combined.  A \verb/SCALAR/ can be used to determine the proportion by which both
+values are combined.  For instance, $0.5$ would contribute each equally, where
+$0.75$ would weigh the first by $75%$ and the second by $25%$.
+
+We won't describe all of the instructions in this tutorial, but we will look at
+a couple of examples.  Our original query, searching for the band Iron
+Butterfly, could look like this: \tt{73b562a1-91ba-4df5-b12f-63fe592f8b4b
+CONTEXT 'Iron' EMPH 'Butterfly' EMPH COMBINE EXECUTE 'band' QUERY EXECUTE 0.8
+SCOMBINE}. We begin this query by setting the context under which this query
+will execute.  In this case, a UUID is used to define the context.  Only vectors
+defined in this context will be used.  Next, both ``Iron'' and ``Butterfly'' are
+emphasized as keywords. These are combined into a single query, which is
+executed to create a stream. Then, the ``band'' keyword is turned into a query
+and executed to create a second stream.  Finally, the two streams are combined
+with a scalar value of $0.8$ to emphasize ``Iron Butterfly'' but to also give
+the ``band'' keyword a $20%$ bonus in the results.  In this design, the server
+simply executes queries based on a user's fine tuning, and the user-side scripts
+translates a user's query into a simple RPN language.
+
+\subsection{File Insertion}
+
+Now that we have a way to construct and execute queries, we need to have a way
+to populate the search engine with data to query.  The very first assumption we
+will make is that the server will never actually open these files.  Instead, the
+user code will do whatever magic is required to digest these files into a vector
+form, and then this will be submitted with some kind of URI to tie this vector
+form to a file.  The user code can obviously read the file and create a URI.
+It's up to the user code to give the server a URI that it can understand in
+order to access the file again.  By doing this, the server does not need to know
+how to interpret or even access files.  User code can be written to crunch
+through e-mails, Word documents, PDF files, or source code.  An insertion
+provides the context UUID, the URI for the file, and a list of word scalar
+pairs. The word in the pair is the keyword in the file, and the scalar is the
+number of occurrences of that word in the file.  It is up to the user code to
+filter out stop words if necessary or to stem words in order to ensure that
+plurals, conjugations, or other declensions are reduced to some normal form.
+There are plenty of excellent resources and libraries for doing this, which is
+why in our opinion, the mechanism belongs in user code.  It is up to the user to
+ensure that, for a given context, similar stop word and declension rules are
+followed to ensure that file vectors are uniformly applied to a query to derive
+search results. The role of the server is further constrained to be a simple
+math engine that computes equations (queries) across a vector space.
+
+\subsection{API Feature Conclusion}
+
+We've constrained the API to two major functions covering three major features.
+The API allows user code to insert files into a vector space using a defined
+context.  The API then allows the user to query these files by using a simple
+query language that provides user code the ability to perform fine adjustments
+to search results in order to help the user find a particular file.  These two
+functions shift a significant amount of work to user code, but in exchange,
+significantly simplify both the server and the API. We can tightly constrain
+this API to perform correctly for any arbitrary execution, ensuring that the
+server code will perform correctly with respect to the expectations laid out in
+our specification. In the next sections, we will begin to decompose these
+features into an executable specification that we can define in CBMC and later
+use to verify that the server code or user code is behaving correctly with
+respect to this specification.
