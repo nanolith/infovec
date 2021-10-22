@@ -207,3 +207,69 @@ our specification. In the next sections, we will begin to decompose these
 features into an executable specification that we can define in CBMC and later
 use to verify that the server code or user code is behaving correctly with
 respect to this specification.
+
+\section{Basic Assertions in CBMC}
+
+To start building our specification, we need to talk about assertions. An
+assertion is a statement of fact which must be true for computation to continue.
+We make use of assertions in software development in order to protect
+assumptions we've made or to enforce function or data structure contracts. In C,
+assertions are generally checked at runtime. Such assertions are a last defense
+against something bad happening if an assumption is shown to be wrong at
+runtime, and the application will terminate rather than continue. This is a bit
+harsh and in a system in which uptime is crucial, an untenable solution.
+Furthermore, it adds runtime checks that must be verified on each entry or exit
+of a function.  These checks can significantly slow down an application.  In the
+2011 C standard, static assertions were added with \verb/_Static_assert/. These
+assertions are executed at compile time, and can only evaluate constant
+expressions.  They are useful for verifying some software constraints, but they
+are unavailable at runtime, and thus, can't be used to verify function
+contracts.  CBMC provides a middle way with \verb/__CPROVER_assert/.  This
+assertion is available when CBMC executes and it provides a way to use the SMT
+solver to verify all possible cases.  These assertions must be used with care to
+prevent combinatorial explosion, but they are very powerful.
+
+We have two challenges.  The first is to capture our function contracts in a way
+that they incur no runtime penalty, and the second is to reduce the number of
+checks that we have to perform in order to ensure that our model checks run
+efficiently.  The first challenge is easily overcome with a little macro magic.
+But, the second challenge fundamentally changes the way we write C software. We
+can't, for instance, run a model check against the entire program.  The RAM and
+CPU time requirements would dwarf the average supercomputer.  Instead, we need
+to break down our formal specification and our software in such a way that we
+can check the specification in parts.  This decomposition, in practice, is
+little different than the sort of decomposition we perform to create normal
+software abstractions, such as creating functions.  We need to do one more step
+than usual: we need to create \emph{shadow functions}.
+
+A shadow function is a simulation of a real function that, from the perspective
+of the model checker, works in the same way.  We simplify the real function to
+reduce the amount of work that the model checker must perform while maintaining
+both the function contract and the range of possible actions that the function
+may perform.  It is not necessary that the contract and responses must be
+tightly coupled.  For instance, the function may enforce a contract that
+places certain requirements on inputs, but it may pick a non-deterministic
+return value based on all possible return values that it may return in order to
+exercise various branch conditions in the software under instrumentation.  This
+decoupling reduces the model state that the model checker must maintain for this
+function, which in turn, reduces the overall complexity of the model checking.
+A great example of this is the standard UNIX \verb/read/ function.  If we
+examine the manual page for this function, we see that it takes three arguments:
+a descriptor, a buffer, and the buffer size.  This function will attempt to read
+this number of bytes from the descriptor. Various return values are used to
+indicate how many bytes are read, whether an error was encountered, or whether
+the descriptor had read the end of file marker.  Of these return codes, the only
+one that is coupled to the input parameters is a non-zero positive return value,
+which must be less than or equal to the size.  Furthermore, if a non-zero
+positive value is returned, it is expected that the buffer passed to the
+function has been modified.  We don't need to actually read from a descriptor in
+order to simulate this function.  By using the manual page and with a little
+creativity, we can create a simpler analogue of this function that verifies
+the function contract on the parameters and uses the non-deterministic features
+built into CBMC to provide an appropriate range of return values and
+side-effects.  The model checker is then free to use this information in order
+to find a counter-example that fails the model check.  The beauty of this is
+that \emph{any} function can be simulated this way, allowing us to focus on
+model checking one function at a time by shadowing every other function.  We can
+build up a specification, verify each function we write with this specification,
+and extend this verification to the entire program.
