@@ -229,6 +229,35 @@ assertion is available when CBMC executes and it provides a way to use the SMT
 solver to verify all possible cases.  These assertions must be used with care to
 prevent combinatorial explosion, but they are very powerful.
 
+We create a simple macro, called \verb/MODEL_ASSERT/, which we use to make
+assertions.  This macro is only available at model check time. During the model
+check, we define the macro \verb/CBMC/ as $1$, which is used to enable the
+assertions.  Otherwise, the \verb/MODEL_ASSERT/ macro does nothing. We will also
+use a special version of \verb/malloc/ and \verb/free/ during model checking
+which we will define later.  These are much more strict than the C standard
+allocator.  The \verb/malloc/ allocator can fail in our model, which by default,
+CBMC does not model.  When \verb/malloc/ fails, it returns \verb/NULL/. We
+modify the \verb/free/ function to perform a \verb/NULL/ check.  While it is
+perfectly valid to free \verb/NULL/ in C, this is an important checkpoint to
+ensure that we are only freeing valid memory.  If \verb/CBMC/ is defined as $0$,
+then the allocator is not overridden, and the \verb/MODEL_ASSERT/ macro does
+nothing.  There is also a \verb/MODEL_ASSUME/ macro, which we will talk about
+later.
+
+<<MODEL_ASSERT>>=
+#if CBMC
+# define MODEL_ASSERT(x)  __CPROVER_assert((x), #x)
+# define MODEL_ASSUME(x)  __CPROVER_assume((x))
+# ifndef CBMC_NO_MALLOC_OVERRIDE
+# define malloc cbmc_malloc
+# define free cbmc_free
+# endif
+#else
+# define MODEL_ASSERT(x)
+# define MODEL_ASSUME(x)
+#endif
+>>@<<
+
 We have two challenges.  The first is to capture our function contracts in a way
 that they incur no runtime penalty, and the second is to reduce the number of
 checks that we have to perform in order to ensure that our model checks run
